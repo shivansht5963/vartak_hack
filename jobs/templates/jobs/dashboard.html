@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ETL Job Dashboard | DataRefinery</title>
+    <!-- Bootstrap 5 CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    
+    <style>
+        :root {
+            --primary-pink: #fa75c6;
+            --primary-yellow: #efff5e;
+            --header-bg: #101010;
+            --body-bg: #fffdf5;
+            --card-bg: #ffffff;
+            --terminal-bg: #0d1117;
+            --terminal-text: #28a745;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: var(--body-bg);
+            color: #333;
+        }
+
+        .navbar {
+            background-color: var(--header-bg);
+            padding: 1rem 2rem;
+        }
+
+        .navbar-brand {
+            color: #fff !important;
+            font-weight: 700;
+            letter-spacing: -0.5px;
+        }
+
+        .job-id {
+            color: #888;
+            font-size: 0.9rem;
+            font-family: monospace;
+        }
+
+        .status-card {
+            background-color: var(--card-bg);
+            border: 1px solid rgba(0,0,0,0.05);
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.02);
+            padding: 2rem;
+            margin-top: 2rem;
+        }
+
+        .progress {
+            height: 25px;
+            border-radius: 12px;
+            background-color: #f0f0f0;
+            overflow: hidden;
+            margin: 1.5rem 0;
+        }
+
+        .progress-bar {
+            background-color: var(--primary-pink);
+            font-weight: 600;
+        }
+
+        .badge-status {
+            padding: 0.5rem 1rem;
+            border-radius: 50px;
+            font-weight: 600;
+            font-size: 0.9rem;
+        }
+
+        .status-pending { background-color: #e0e0e0; color: #555; }
+        .status-processing { background-color: var(--primary-yellow); color: #000; }
+        .status-completed { background-color: #28a745; color: #fff; }
+        .status-failed { background-color: #dc3545; color: #fff; }
+
+        .terminal-window {
+            background-color: var(--terminal-bg);
+            border-radius: 8px;
+            color: #fff;
+            font-family: 'Consolas', 'Monaco', monospace;
+            padding: 0;
+            overflow: hidden;
+            margin-top: 2rem;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
+
+        .terminal-header {
+            background-color: #1f2428;
+            padding: 0.5rem 1rem;
+            display: flex;
+            align-items: center;
+            border-bottom: 1px solid #30363d;
+        }
+
+        .terminal-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 6px;
+        }
+
+        .dot-red { background-color: #ff5f56; }
+        .dot-yellow { background-color: #ffbd2e; }
+        .dot-green { background-color: #27c93f; }
+
+        .terminal-body {
+            height: 300px;
+            overflow-y: auto;
+            padding: 1rem;
+            color: var(--terminal-text);
+            font-size: 0.9rem;
+            line-height: 1.5;
+        }
+
+        .log-entry {
+            margin-bottom: 4px;
+        }
+
+        .btn-download {
+            background-color: var(--primary-pink);
+            color: #fff;
+            border: none;
+            padding: 10px 24px;
+            border-radius: 8px;
+            font-weight: 600;
+            transition: all 0.2s;
+        }
+
+        .btn-download:hover {
+            opacity: 0.9;
+            color: #fff;
+            transform: translateY(-1px);
+        }
+        
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+
+    <!-- Header -->
+    <nav class="navbar navbar-expand-lg navbar-dark">
+        <div class="container">
+            <a class="navbar-brand" href="#">DataRefinery</a>
+            <span class="job-id ms-auto">Job ID: <span id="jobIdHeader">{{ job.id }}</span></span>
+        </div>
+    </nav>
+
+    <div class="container">
+        <!-- Status Card -->
+        <div class="status-card">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <div>
+                    <h4 class="mb-1" id="filenameDisplay">{{ job.original_file.name }}</h4>
+                    <small class="text-muted">Uploaded on: {{ job.created_at|date:"M d, Y H:i" }}</small>
+                </div>
+                <span id="statusBadge" class="badge-status status-pending">{{ job.status }}</span>
+            </div>
+
+            <div class="progress">
+                <div id="progressBar" class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: {{ job.progress_percentage }}%">
+                    {{ job.progress_percentage }}%
+                </div>
+            </div>
+            
+            <div id="actionArea" class="mt-4 text-center ">
+                <a href="{{ job.processed_file.url }}" id="downloadBtn" class="btn btn-download hidden" target="_blank">
+                    Download Cleaned File
+                </a>
+            </div>
+        </div>
+
+        <!-- Terminal -->
+        <div class="terminal-window">
+            <div class="terminal-header">
+                <div class="terminal-dot dot-red"></div>
+                <div class="terminal-dot dot-yellow"></div>
+                <div class="terminal-dot dot-green"></div>
+                <span class="ms-3 text-muted" style="font-size: 0.8rem;">Build Logs</span>
+            </div>
+            <div class="terminal-body" id="terminalBody">
+                <div class="log-entry">> Initializing job monitor...</div>
+                <div class="log-entry">> Waiting for logs...</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bootstrap JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+
+    <script>
+        const jobId = "{{ job.id }}";
+        const statusApiUrl = `/api/status/${jobId}/`;
+        const progressBar = document.getElementById('progressBar');
+        const statusBadge = document.getElementById('statusBadge');
+        const terminalBody = document.getElementById('terminalBody');
+        const downloadBtn = document.getElementById('downloadBtn');
+
+        let isCompleted = false;
+
+        function updateStatus(status) {
+            statusBadge.textContent = status;
+            statusBadge.className = 'badge-status'; // Reset classes
+            
+            if (status === 'PENDING') statusBadge.classList.add('status-pending');
+            else if (status === 'PROCESSING') statusBadge.classList.add('status-processing');
+            else if (status === 'COMPLETED') statusBadge.classList.add('status-completed');
+            else if (status === 'FAILED') statusBadge.classList.add('status-failed');
+        }
+
+        function appendLog(message, isRaw = false) {
+            const div = document.createElement('div');
+            div.className = 'log-entry';
+            div.textContent = isRaw ? message : `> ${message}`;
+            terminalBody.appendChild(div);
+            // Auto scroll to bottom
+            terminalBody.scrollTop = terminalBody.scrollHeight;
+        }
+
+        function pollStatus() {
+            if (isCompleted) return;
+
+            fetch(statusApiUrl)
+                .then(response => response.json())
+                .then(data => {
+                    // Update Progress
+                    progressBar.style.width = `${data.progress}%`;
+                    progressBar.textContent = `${data.progress}%`;
+
+                    // Update Status Badge
+                    updateStatus(data.status);
+
+                    // Update Logs
+                    // The API returns a list of *all* errors/logs associated with the job
+                    // In a real optimized system we might only fetch new ones, but per requirements:
+                    // "The 'errors' key should be a list of error_message strings"
+                    // We'll clear and re-render or check for new ones. 
+                    // To avoid duplicates if the API returns full history every time, we should handle that.
+                    // However, simpler is to just only add NEW logs if we track what we've seen.
+                    // But standard "easy" implementation:
+                    // Let's just assume we append errors as they come. 
+                    // Wait, if the API returns the FULL list every time, we shouldn't just append.
+                    // Let's clear the terminal if we are re-rendering, OR better, check length.
+                    
+                    // Simple logic:
+                    if (data.errors && data.errors.length > 0) {
+                         // Clear previous generic messages if it's the first error
+                         const currentLogs = terminalBody.querySelectorAll('.log-entry-error');
+                         if (currentLogs.length < data.errors.length) {
+                             // Find new errors
+                             const newErrors = data.errors.slice(currentLogs.length);
+                             newErrors.forEach(err => {
+                                 const div = document.createElement('div');
+                                 div.className = 'log-entry log-entry-error'; // Add marker class
+                                 div.textContent = `> [ERROR] ${err}`;
+                                 div.style.color = '#ff5f56';
+                                 terminalBody.appendChild(div);
+                             });
+                             terminalBody.scrollTop = terminalBody.scrollHeight;
+                         }
+                    }
+
+                    // Completion Check
+                    if (data.status === 'COMPLETED') {
+                        isCompleted = true;
+                        progressBar.classList.remove('progress-bar-striped', 'progress-bar-animated');
+                        progressBar.classList.add('bg-success');
+                        downloadBtn.classList.remove('hidden');
+                        appendLog("Job Completed Successfully!");
+                        clearInterval(pollingInterval);
+                    } else if (data.status === 'FAILED') {
+                        isCompleted = true;
+                        progressBar.classList.add('bg-danger');
+                        appendLog("Job Failed.");
+                        clearInterval(pollingInterval);
+                    }
+                })
+                .catch(err => {
+                    console.error('Polling error:', err);
+                    appendLog("Error connecting to server...", true);
+                });
+        }
+
+        // Start polling
+        const pollingInterval = setInterval(pollStatus, 1500);
+        
+        // Initial poll
+        pollStatus();
+    </script>
+</body>
+</html>
