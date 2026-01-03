@@ -1,3 +1,4 @@
+# jobs/models.py
 from django.db import models
 import uuid
 
@@ -23,10 +24,31 @@ class ETLJob(models.Model):
 
 class JobError(models.Model):
     job = models.ForeignKey(ETLJob, on_delete=models.CASCADE, related_name='errors')
-    row_index = models.IntegerField(help_text="Which row number failed?")
-    error_message = models.TextField(help_text="What went wrong?")
-    raw_data = models.TextField(help_text="The actual bad data from that row")
+    row_index = models.IntegerField()
+    error_message = models.TextField()
     timestamp = models.DateTimeField(auto_now_add=True)
 
+# --- ADD THIS NEW MODEL FOR SAKSHAM ---
+class RowItem(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    job = models.ForeignKey(ETLJob, on_delete=models.CASCADE, related_name='rows')
+    
+    # Raw Input
+    raw_text = models.TextField(blank=True, null=True)
+    
+    # Feature 1: Ghost Data (AI + Web Search)
+    enriched_data = models.JSONField(null=True, blank=True) 
+    is_enriched = models.BooleanField(default=False)
+    
+    # Feature 2: Confidence Heatmap (0-100)
+    confidence_score = models.IntegerField(default=0)
+    
+    status = models.CharField(max_length=20, default='PENDING', choices=[
+        ('PENDING', 'Pending'),
+        ('PROCESSING', 'Processing'),
+        ('COMPLETED', 'Completed'),
+        ('FAILED', 'Failed')
+    ])
+
     def __str__(self):
-        return f"Error in Job {self.job.id} at Row {self.row_index}"
+        return f"Row {self.id} - {self.confidence_score}%"

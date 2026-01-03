@@ -3,95 +3,104 @@ import requests
 from django.shortcuts import get_object_or_404, render
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
-from django.conf import settings
-from .models import ETLJob, JobError
-
-# Placeholder for n8n Webhook URL - Replace with actual URL
-N8N_WEBHOOK_URL = "https://your-n8n-instance.com/webhook/..."
+from django.views.decorators.http import require_POST
+from .models import ETLJob, RowItem, JobError
 
 @csrf_exempt
 def upload_file_view(request):
+    """
+    Step 1: User uploads a file. We just save it.
+    The Worker Script (Person 3) will verify it and split it into rows later.
+    """
     if request.method == 'POST' and request.FILES.get('original_file'):
         uploaded_file = request.FILES['original_file']
-        
-        # Create Job
         job = ETLJob.objects.create(original_file=uploaded_file)
-        
-        # Construct absolute URL for the file
-        # request.build_absolute_uri returns the full domain + path
-        file_url = request.build_absolute_uri(job.original_file.url)
-        
-        # Payload for n8n
-        payload = {
-            'job_id': str(job.id),
-            'file_url': file_url,
-            'metadata': job.metadata
-        }
-        
-        # Send to n8n
-        try:
-            # Using a generic error catch to prevent user view crash if n8n is down
-            response = requests.post(N8N_WEBHOOK_URL, json=payload, timeout=5)
-            # You might want to log response.status_code here
-        except requests.exceptions.RequestException as e:
-            # In a real app, handle this (retry, log error, etc.)
-            print(f"Failed to trigger n8n: {e}")
-            
         return JsonResponse({'job_id': job.id}, status=201)
     
     return JsonResponse({'error': 'Invalid request. POST a file named "original_file".'}, status=400)
 
-def get_job_status(request, job_id):
+@csrf_exempt
+@require_POST
+def update_row_api(request):
+    """
+    Step 4: n8n calls this API when it finishes analyzing ONE row.
+    Expected JSON Payload:
+    {
+        "id": "row_uuid",
+        "enriched_data": { "name": "...", "ceo": "..." },
+        "confidence_score": 85,
+        "is_enriched": true
+    }
+    """
+    try:
+        data = json.loads(request.body)
+        row_id = data.get('id')
+        
+        row = get_object_or_404(RowItem, id=row_id)
+        
+        # Save Saksham AI Data
+        row.enriched_data = data.get('enriched_data')
+        row.confidence_score = data.get('confidence_score', 0)
+        row.is_enriched = data.get('is_enriched', False)
+        row.status = 'COMPLETED'
+        row.save()
+        
+        # Update Job Progress Percentage
+        total_rows = row.job.rows.count()
+        completed_rows = row.job.rows.filter(status='COMPLETED').count()
+        
+        if total_rows > 0:
+            row.job.progress_percentage = int((completed_rows / total_rows) * 100)
+            
+            # If all rows are done, mark job as completed
+            if completed_rows == total_rows:
+                row.job.status = 'COMPLETED'
+            else:
+                row.job.status = 'PROCESSING'
+            row.job.save()
+
+        return JsonResponse({'status': 'success'})
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+
+def dashboard_view(request, job_id):
+    """
+    The Saksham Dashboard. Shows the Heatmap.
+    """
     job = get_object_or_404(ETLJob, id=job_id)
     
-    # Get all related error messages
-    # Assuming 'related_name="errors"' was set on theForeignKey in JobError model
-    # If not, use job.joberror_set.all()
-    # Based on my previous turn, I used related_name='errors'.
-    errors = list(job.errors.values_list('error_message', flat=True))
+    # Get all rows, ordered by confidence (Riskier rows first?)
+    # Let's order by creation so they match the file order
+    rows = job.rows.all().order_by('id')
     
-    response_data = {
-        "status": job.status,
-        "progress": job.progress_percentage,
-        "errors": errors
+    # Calculate Stats
+    completed = rows.filter(status='COMPLETED').count()
+    avg_conf = 0
+    if completed > 0:
+        total_score = sum([r.confidence_score for r in rows if r.status == 'COMPLETED'])
+        avg_conf = round(total_score / completed, 1)
+
+    context = {
+        'job': job,
+        'rows': rows,
+        'stats': {
+            'total': rows.count(),
+            'completed': completed,
+            'avg_conf': avg_conf
+        }
     }
-    return JsonResponse(response_data)
+    return render(request, 'jobs/dashboard.html', context)
+
+# Keep other views if necessary (e.g. get_job_status), or remove if unused.
+def get_job_status(request, job_id):
+    job = get_object_or_404(ETLJob, id=job_id)
+    return JsonResponse({"status": job.status, "progress": job.progress_percentage})
 
 @csrf_exempt
 def n8n_callback_view(request, job_id):
-    if request.method == 'POST':
-        try:
-            data = json.loads(request.body)
-            job = get_object_or_404(ETLJob, id=job_id)
-            
-            # Update fields if present
-            if 'status' in data:
-                job.status = data['status']
-            if 'progress' in data:
-                job.progress_percentage = data['progress']
-            
-            job.save()
-            
-            # Handle new error logic
-            new_error = data.get('new_error')
-            if new_error:
-                # Basic logging, assuming row_index might be passed or default to 0/1
-                # The prompt example: "new_error": "Row 5 bad date"
-                # If we want to split this or just save it as message:
-                JobError.objects.create(
-                    job=job,
-                    row_index=data.get('row_index', 0), # Default 0 if not provided
-                    error_message=new_error,
-                    raw_data=data.get('raw_data', 'N/A') # Optional extra data
-                )
-                
-            return JsonResponse({"success": True})
-            
-        except json.JSONDecodeError:
-            return JsonResponse({'error': 'Invalid JSON'}, status=400)
-    
-    return JsonResponse({'error': 'POST method required'}, status=405)
+    # This was the old view. You can keep it or delete it.
+    # update_row_api replaces its functionality for rows.
+    return JsonResponse({"status": "deprecated"})
 
-def dashboard_view(request, job_id):
-    job = get_object_or_404(ETLJob, id=job_id)
-    return render(request, 'jobs/dashboard.html', {'job': job})
+def simple_upload_view(request):
+    return render(request, 'jobs/upload.html')
